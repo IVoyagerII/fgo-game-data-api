@@ -179,12 +179,16 @@ async def generate_exports(
 
             if region == Region.JP:
                 all_basic_servant_en = sort_by_collection_no(
-                    get_basic_servant(region, svt_id, Language.en)
-                    for svt_id in masters[region].mstSvtServantCollectionNo.values()
+                    [
+                        await get_basic_servant(redis, region, svt_id, lang=Language.en)
+                        for svt_id in masters[region].mstSvtServantCollectionNo.values()
+                    ]
                 )
                 all_basic_equip_en = sort_by_collection_no(
-                    get_basic_equip(region, svt_id, Language.en)
-                    for svt_id in masters[region].mstSvtEquipCollectionNo.values()
+                    [
+                        await get_basic_equip(redis, region, svt_id, Language.en)
+                        for svt_id in masters[region].mstSvtEquipCollectionNo.values()
+                    ]
                 )
                 all_basic_cc_en = sort_by_collection_no(
                     get_basic_cc(region, cc_id, Language.en)

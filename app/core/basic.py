@@ -50,7 +50,6 @@ from ..schemas.raw import (
     MstFunc,
     MstSkill,
     MstSvt,
-    MstSvtLimit,
     MstTreasureDevice,
 )
 from . import reverse as reverse_ids
@@ -283,6 +282,7 @@ async def get_basic_svt(
     redis: Redis,
     region: Region,
     svt_id: int,
+    svt_limit: int = 1,
     lang: Optional[Language] = None,
     mstSvt: Optional[MstSvt] = None,
 ) -> dict[str, Any]:
@@ -293,7 +293,9 @@ async def get_basic_svt(
         else:
             raise HTTPException(status_code=404, detail="Svt not found")
 
-    mstSvtLimit = await pydantic_object.fetch_id(redis, region, MstSvtLimit, svt_id)
+    mstSvtLimit = await pydantic_object.fetch_mstSvtLimit(
+        redis, region, svt_id, svt_limit
+    )
     if not mstSvtLimit:
         raise HTTPException(status_code=404, detail="Svt limit not found")
 
@@ -330,12 +332,13 @@ async def get_basic_svt(
 async def get_basic_servant(
     redis: Redis,
     region: Region,
-    item_id: int,
+    svt_id: int,
+    svt_limit: int = 1,
     lang: Optional[Language] = None,
     mstSvt: Optional[MstSvt] = None,
 ) -> BasicServant:
     return BasicServant.parse_obj(
-        await get_basic_svt(redis, region, item_id, lang, mstSvt)
+        await get_basic_svt(redis, region, svt_id, svt_limit, lang, mstSvt)
     )
 
 
@@ -347,7 +350,7 @@ async def get_basic_equip(
     mstSvt: Optional[MstSvt] = None,
 ) -> BasicEquip:
     return BasicEquip.parse_obj(
-        await get_basic_svt(redis, region, item_id, lang, mstSvt)
+        await get_basic_svt(redis, region, item_id, lang=lang, mstSvt=mstSvt)
     )
 
 

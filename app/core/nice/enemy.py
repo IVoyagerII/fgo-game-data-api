@@ -185,7 +185,9 @@ async def get_quest_enemy(
     all_enemy_tds: MultipleNiceTds,
     lang: Language = Language.jp,
 ) -> QuestEnemy:
-    basic_svt = await get_basic_servant(redis, region, user_svt.svtId, lang)
+    basic_svt = await get_basic_servant(
+        redis, region, user_svt.svtId, user_svt.limitCount, lang
+    )
     deck_svt = deck_svt_info.deck
 
     return QuestEnemy(

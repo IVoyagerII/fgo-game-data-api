@@ -28,7 +28,6 @@ pydantic_obj_redis_table: dict[Type[BaseModelORJson], tuple[str, str]] = {
     MstBuff: ("mstBuff", "id"),
     MstFunc: ("mstFunc", "id"),
     MstSvt: ("mstSvt", "id"),
-    MstSvtLimit: ("mstSvtLimit", "svtId"),
     MstSkill: ("mstSkill", "id"),
     MstGift: ("mstGift", "id"),
     MstTreasureDevice: ("mstTreasureDevice", "id"),
@@ -62,3 +61,15 @@ async def check_id(
     redis_key = f"{settings.redis_prefix}:data:{region.name}:{redis_table}"
 
     return await redis.hexists(redis_key, item_id) or False
+
+
+async def fetch_mstSvtLimit(
+    redis: Redis, region: Region, svt_id: int, svt_limit: int = 1
+) -> Optional[MstSvtLimit]:
+    redis_key = f"{settings.redis_prefix}:data:{region.name}:mstSvtlimit"
+    mstSvtLimit = await redis.hget(redis_key, f"{svt_id}:{svt_limit}")
+
+    if mstSvtLimit:
+        return MstSvtLimit.parse_raw(mstSvtLimit)
+
+    return None
