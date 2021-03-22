@@ -1,9 +1,13 @@
 from collections import defaultdict
 from typing import Any, Optional
 
+from aioredis import Redis
+from fastapi import HTTPException
+
 from ..config import Settings
 from ..data.custom_mappings import TRANSLATIONS
 from ..data.gamedata import masters
+from ..redis.helpers import pydantic_object
 from ..schemas.basic import (
     BasicBuffReverse,
     BasicCommandCode,
@@ -46,6 +50,7 @@ from ..schemas.raw import (
     MstFunc,
     MstSkill,
     MstSvt,
+    MstSvtLimit,
     MstTreasureDevice,
 )
 from . import reverse as reverse_ids
@@ -86,7 +91,8 @@ def get_nice_buff_script(region: Region, mstBuff: MstBuff) -> NiceBuffScript:
     return NiceBuffScript.parse_obj(script)
 
 
-def get_basic_buff_from_raw(
+async def get_basic_buff_from_raw(
+    redis: Redis,
     region: Region,
     mstBuff: MstBuff,
     lang: Language,
@@ -108,27 +114,36 @@ def get_basic_buff_from_raw(
     )
     if reverse and reverseDepth >= ReverseDepth.function:
         buff_reverse = BasicReversedBuff(
-            function=(
-                get_basic_function(region, func_id, lang, reverse, reverseDepth)
+            function=[
+                await get_basic_function(
+                    redis, region, func_id, lang, reverse, reverseDepth
+                )
                 for func_id in reverse_ids.buff_to_func(region, mstBuff.id)
-            )
+            ]
         )
         basic_buff.reverse = BasicReversedBuffType(basic=buff_reverse)
     return basic_buff
 
 
-def get_basic_buff(
+async def get_basic_buff(
+    redis: Redis,
     region: Region,
     buff_id: int,
     lang: Language,
     reverse: bool = False,
     reverseDepth: ReverseDepth = ReverseDepth.function,
 ) -> BasicBuffReverse:
-    mstBuff = masters[region].mstBuffId[buff_id]
-    return get_basic_buff_from_raw(region, mstBuff, lang, reverse, reverseDepth)
+    mstBuff = await pydantic_object.fetch_id(redis, region, MstBuff, buff_id)
+    if mstBuff:
+        return await get_basic_buff_from_raw(
+            redis, region, mstBuff, lang, reverse, reverseDepth
+        )
+    else:
+        raise HTTPException(status_code=404, detail="Buff not found")
 
 
-def get_basic_function_from_raw(
+async def get_basic_function_from_raw(
+    redis: Redis,
     region: Region,
     mstFunc: MstFunc,
     lang: Language,
@@ -141,9 +156,9 @@ def get_basic_function_from_raw(
         traitVals = get_traits_list(mstFunc.vals)
     else:
         buffs = [
-            get_basic_buff(region, buff_id, lang)
+            await get_basic_buff(redis, region, buff_id, lang)
             for buff_id in mstFunc.vals
-            if buff_id in masters[region].mstBuffId
+            if await pydantic_object.check_id(redis, region, MstBuff, buff_id)
         ]
 
     basic_func = BasicFunctionReverse(
@@ -159,32 +174,41 @@ def get_basic_function_from_raw(
 
     if reverse and reverseDepth >= ReverseDepth.skillNp:
         func_reverse = BasicReversedFunction(
-            skill=(
-                get_basic_skill(region, skill_id, lang, reverse, reverseDepth)
+            skill=[
+                await get_basic_skill(
+                    redis, region, skill_id, lang, reverse, reverseDepth
+                )
                 for skill_id in reverse_ids.func_to_skillId(region, mstFunc.id)
-            ),
-            NP=(
-                get_basic_td(region, td_id, lang, reverse, reverseDepth)
+            ],
+            NP=[
+                await get_basic_td(redis, region, td_id, lang, reverse, reverseDepth)
                 for td_id in reverse_ids.func_to_tdId(region, mstFunc.id)
-            ),
+            ],
         )
         basic_func.reverse = BasicReversedFunctionType(basic=func_reverse)
 
     return basic_func
 
 
-def get_basic_function(
+async def get_basic_function(
+    redis: Redis,
     region: Region,
     func_id: int,
     lang: Language,
     reverse: bool = False,
     reverseDepth: ReverseDepth = ReverseDepth.skillNp,
 ) -> BasicFunctionReverse:
-    mstFunc = masters[region].mstFuncId[func_id]
-    return get_basic_function_from_raw(region, mstFunc, lang, reverse, reverseDepth)
+    mstFunc = await pydantic_object.fetch_id(redis, region, MstFunc, func_id)
+    if mstFunc:
+        return await get_basic_function_from_raw(
+            redis, region, mstFunc, lang, reverse, reverseDepth
+        )
+    else:
+        raise HTTPException(status_code=404, detail="Function not found")
 
 
-def get_basic_skill(
+async def get_basic_skill(
+    redis: Redis,
     region: Region,
     skill_id: int,
     lang: Language,
@@ -209,10 +233,10 @@ def get_basic_skill(
         activeSkills = reverse_ids.active_to_svtId(region, skill_id)
         passiveSkills = reverse_ids.passive_to_svtId(region, skill_id)
         skill_reverse = BasicReversedSkillTd(
-            servant=(
-                get_basic_servant(region, svt_id, lang=lang)
+            servant=[
+                await get_basic_servant(redis, region, svt_id, lang=lang)
                 for svt_id in activeSkills | passiveSkills
-            ),
+            ],
             MC=(
                 get_basic_mc(region, mc_id, lang)
                 for mc_id in reverse_ids.skill_to_MCId(region, skill_id)
@@ -226,7 +250,8 @@ def get_basic_skill(
     return basic_skill
 
 
-def get_basic_td(
+async def get_basic_td(
+    redis: Redis,
     region: Region,
     td_id: int,
     lang: Language,
@@ -245,24 +270,32 @@ def get_basic_td(
     if reverse and reverseDepth >= ReverseDepth.servant:
         mstSvtTreasureDevice = masters[region].tdToSvt.get(td_id, set())
         td_reverse = BasicReversedSkillTd(
-            servant=(
-                get_basic_servant(region, svt_id, lang=lang)
+            servant=[
+                await get_basic_servant(redis, region, svt_id, lang=lang)
                 for svt_id in mstSvtTreasureDevice
-            )
+            ]
         )
         basic_td.reverse = BasicReversedSkillTdType(basic=td_reverse)
     return basic_td
 
 
-def get_basic_svt(
+async def get_basic_svt(
+    redis: Redis,
     region: Region,
     svt_id: int,
     lang: Optional[Language] = None,
     mstSvt: Optional[MstSvt] = None,
 ) -> dict[str, Any]:
     if not mstSvt:
-        mstSvt = masters[region].mstSvtId[svt_id]
-    mstSvtLimit = masters[region].mstSvtLimitFirst[svt_id]
+        svt_redis = await pydantic_object.fetch_id(redis, region, MstSvt, svt_id)
+        if svt_redis:
+            mstSvt = svt_redis
+        else:
+            raise HTTPException(status_code=404, detail="Svt not found")
+
+    mstSvtLimit = await pydantic_object.fetch_id(redis, region, MstSvtLimit, svt_id)
+    if not mstSvtLimit:
+        raise HTTPException(status_code=404, detail="Svt limit not found")
 
     basic_servant = {
         "id": svt_id,
@@ -294,22 +327,28 @@ def get_basic_svt(
     return basic_servant
 
 
-def get_basic_servant(
+async def get_basic_servant(
+    redis: Redis,
     region: Region,
     item_id: int,
     lang: Optional[Language] = None,
     mstSvt: Optional[MstSvt] = None,
 ) -> BasicServant:
-    return BasicServant.parse_obj(get_basic_svt(region, item_id, lang, mstSvt))
+    return BasicServant.parse_obj(
+        await get_basic_svt(redis, region, item_id, lang, mstSvt)
+    )
 
 
-def get_basic_equip(
+async def get_basic_equip(
+    redis: Redis,
     region: Region,
     item_id: int,
     lang: Optional[Language] = None,
     mstSvt: Optional[MstSvt] = None,
 ) -> BasicEquip:
-    return BasicEquip.parse_obj(get_basic_svt(region, item_id, lang, mstSvt))
+    return BasicEquip.parse_obj(
+        await get_basic_svt(redis, region, item_id, lang, mstSvt)
+    )
 
 
 def get_basic_mc(region: Region, mc_id: int, lang: Language) -> BasicMysticCode:

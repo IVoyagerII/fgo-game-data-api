@@ -1,5 +1,6 @@
 from typing import Optional
 
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...config import Settings
@@ -67,8 +68,9 @@ def get_nice_war_add(region: Region, war_add: MstWarAdd) -> NiceWarAdd:
     )
 
 
-def get_nice_spot(
+async def get_nice_spot(
     conn: Connection,
+    redis: Redis,
     region: Region,
     war_id: int,
     raw_spot: MstSpot,
@@ -99,15 +101,19 @@ def get_nice_spot(
         nextOfsX=raw_spot.nextOfsX,
         nextOfsY=raw_spot.nextOfsY,
         closedMessage=raw_spot.closedMessage,
-        quests=(
-            NiceQuest.parse_obj(get_nice_quest(conn, region, quest, war_id))
+        quests=[
+            NiceQuest.parse_obj(
+                await get_nice_quest(conn, redis, region, quest, war_id)
+            )
             for quest in quests
             if quest.mstQuest.spotId == raw_spot.id
-        ),
+        ],
     )
 
 
-def get_nice_war(conn: Connection, region: Region, war_id: int) -> NiceWar:
+async def get_nice_war(
+    conn: Connection, redis: Redis, region: Region, war_id: int
+) -> NiceWar:
     raw_war = raw.get_war_entity(conn, war_id)
 
     base_settings = {"base_url": settings.asset_url, "region": region}
@@ -158,10 +164,10 @@ def get_nice_war(conn: Connection, region: Region, war_id: int) -> NiceWar:
         maps=(
             get_nice_map(region, raw_map, raw_war.mstBgm) for raw_map in raw_war.mstMap
         ),
-        spots=(
-            get_nice_spot(
-                conn, region, war_id, raw_spot, war_asset_id, raw_war.mstQuest
+        spots=[
+            await get_nice_spot(
+                conn, redis, region, war_id, raw_spot, war_asset_id, raw_war.mstQuest
             )
             for raw_spot in raw_war.mstSpot
-        ),
+        ],
     )

@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...config import Settings
@@ -73,8 +74,8 @@ def get_nice_set_item(set_item: MstSetItem) -> NiceItemSet:
     )
 
 
-def get_nice_shop(
-    region: Region, shop: MstShop, set_items: list[MstSetItem]
+async def get_nice_shop(
+    redis: Redis, region: Region, shop: MstShop, set_items: list[MstSetItem]
 ) -> NiceShop:
     if shop.payType == PayType.FRIEND_POINT:
         shop_item_id = 4
@@ -105,7 +106,7 @@ def get_nice_shop(
         warningMessage=shop.warningMessage,
         payType=PAY_TYPE_NAME[shop.payType],
         cost=NiceItemAmount(
-            item=get_nice_item(region, shop_item_id), amount=shop.prices[0]
+            item=await get_nice_item(redis, region, shop_item_id), amount=shop.prices[0]
         ),
         purchaseType=PURCHASE_TYPE_NAME[shop.purchaseType],
         targetIds=shop.targetIds,
@@ -303,7 +304,8 @@ def get_nice_lottery_box(
     )
 
 
-def get_nice_lottery(
+async def get_nice_lottery(
+    redis: Redis,
     region: Region,
     lottery: MstBoxGacha,
     boxes: list[MstBoxGachaBase],
@@ -322,7 +324,8 @@ def get_nice_lottery(
         slot=lottery.slot,
         payType=PAY_TYPE_NAME[lottery.payType],
         cost=NiceItemAmount(
-            item=get_nice_item(region, lottery.payTargetId), amount=lottery.payValue
+            item=await get_nice_item(redis, region, lottery.payTargetId),
+            amount=lottery.payValue,
         ),
         priority=lottery.priority,
         limited=lottery.flag == BoxGachaFlag.LIMIT_RESET,
@@ -330,7 +333,9 @@ def get_nice_lottery(
     )
 
 
-def get_nice_event(conn: Connection, region: Region, event_id: int) -> NiceEvent:
+async def get_nice_event(
+    conn: Connection, redis: Redis, region: Region, event_id: int
+) -> NiceEvent:
     raw_event = raw.get_event_entity(conn, event_id)
 
     base_settings = {"base_url": settings.asset_url, "region": region}
@@ -384,10 +389,10 @@ def get_nice_event(conn: Connection, region: Region, event_id: int) -> NiceEvent
         finishedAt=raw_event.mstEvent.finishedAt,
         materialOpenedAt=raw_event.mstEvent.materialOpenedAt,
         warIds=(war.id for war in raw_event.mstWar),
-        shop=(
-            get_nice_shop(region, shop, raw_event.mstSetItem)
+        shop=[
+            await get_nice_shop(redis, region, shop, raw_event.mstSetItem)
             for shop in raw_event.mstShop
-        ),
+        ],
         rewards=(
             get_nice_reward(region, reward, event_id, gift_maps)
             for reward in raw_event.mstEventReward
@@ -403,10 +408,12 @@ def get_nice_event(conn: Connection, region: Region, event_id: int) -> NiceEvent
             )
             for tower in raw_event.mstEventTower
         ),
-        lotteries=(
-            get_nice_lottery(region, lottery, raw_event.mstBoxGachaBase, gift_maps)
+        lotteries=[
+            await get_nice_lottery(
+                redis, region, lottery, raw_event.mstBoxGachaBase, gift_maps
+            )
             for lottery in raw_event.mstBoxGacha
-        ),
+        ],
     )
 
     return nice_event

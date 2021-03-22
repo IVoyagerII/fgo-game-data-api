@@ -1,15 +1,16 @@
 import re
 from typing import Any, Optional, Union
 
+from aioredis import Redis
 from fastapi import HTTPException
 
 from ...config import Settings, logger
-from ...data.gamedata import masters
+from ...redis.helpers import pydantic_object
 from ...schemas.common import Region
 from ...schemas.enums import FUNC_APPLYTARGET_NAME, FUNC_VALS_NOT_BUFF
 from ...schemas.gameenums import FUNC_TARGETTYPE_NAME, FUNC_TYPE_NAME, FuncType
 from ...schemas.nice import AssetURL, NiceFuncGroup
-from ...schemas.raw import FunctionEntityNoReverse, MstFuncGroup
+from ...schemas.raw import FunctionEntityNoReverse, MstFunc, MstFuncGroup
 from ..utils import get_traits_list
 from .buff import get_nice_buff
 
@@ -40,8 +41,16 @@ FRIEND_SUPPORT_FUNCTIONS = {
 }
 
 
-def parse_dataVals(
-    datavals: str, functype: int, region: Region
+async def get_func_id_type(redis: Redis, region: Region, func_id: int) -> int:
+    redis_func = await pydantic_object.fetch_id(redis, region, MstFunc, func_id)
+    if redis_func:
+        return redis_func.funcType
+    else:
+        raise HTTPException(status_code=404, detail="Depend function not found")
+
+
+async def parse_dataVals(
+    redis: Redis, region: Region, functype: int, datavals: str
 ) -> dict[str, Union[int, str, list[int]]]:
     error_message = f"Can't parse datavals: {datavals}"
     INITIAL_VALUE = -98765
@@ -142,8 +151,15 @@ def parse_dataVals(
                         # This assumes DependFuncId is parsed before.
                         # If DW ever make it more complicated than this, consider
                         # using DUMMY_PREFIX + ... and parse it later
-                        func_type = masters[region].mstFuncId[output["DependFuncId"]].funcType  # type: ignore
-                        vals_value = parse_dataVals(array2[1], func_type, region)
+                        func_type = await get_func_id_type(
+                            redis, region, output["DependFuncId"]  # type: ignore
+                        )
+                        vals_value = await parse_dataVals(
+                            redis,
+                            region,
+                            func_type,
+                            array2[1],
+                        )
                         output["DependFuncVals"] = vals_value  # type: ignore
                     elif array2[0] in {
                         "TargetList",
@@ -214,7 +230,8 @@ def get_nice_func_group(
     )
 
 
-def get_nice_function(
+async def get_nice_function(
+    redis: Redis,
     region: Region,
     function: FunctionEntityNoReverse,
     svals: Optional[list[str]] = None,
@@ -260,7 +277,7 @@ def get_nice_function(
     ]:
         if argument:
             nice_func[field] = [
-                parse_dataVals(sval, function.mstFunc.funcType, region)
+                await parse_dataVals(redis, region, function.mstFunc.funcType, sval)
                 for sval in argument
             ]
 

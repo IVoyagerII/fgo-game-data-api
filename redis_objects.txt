@@ -1,0 +1,47 @@
+Int -> Object
+mstBuffId
+mstFuncId
+mstSvtId
+mstSkillId
+mstGiftId
+mstTreasureDeviceId
+mstSvtLimit
+mstEquipId
+mstWarId
+mstEventId
+mstCommandCodeId
+
+Int -> Int
+mstSvtServantCollectionNo
+mstSvtEquipCollectionNo
+mstCCCollectionNo
+bondEquip
+bondEquipOwner
+valentineEquip
+valentineEquipOwner
+
+set[int]
+mstCombineSkillItem
+mstCombineLimitItem
+mstCombineCostumeItem
+
+int -> list[object]
+mstCommandCodeSkill
+mstEquipSkill
+mstSvtGroupSvtId
+mstClassRelationOverwriteId
+mstFuncGroupId
+
+int -> set[int]
+buffToFunc
+funcToSkill
+funcToTd
+activeSkillToSvt
+passiveSkillToSvt
+tdToSvt
+skillToAiAct
+aiActToAiSvt
+aiActToAiField
+parentAiSvt
+parentAiField
+mstWarEventId

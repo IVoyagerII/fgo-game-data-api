@@ -3,11 +3,11 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Union
 
-import redis
+from aioredis import Redis
 from git import Repo
 from pydantic import DirectoryPath
 
-from .config import Settings, logger, project_root
+from .config import SecretSettings, Settings, logger, project_root
 from .core.basic import (
     get_basic_cc,
     get_basic_equip,
@@ -34,6 +34,7 @@ from .schemas.nice import NiceEquip, NiceServant
 
 
 settings = Settings()
+secrets = SecretSettings()
 REGION_PATHS = {Region.JP: settings.jp_gamedata, Region.NA: settings.na_gamedata}
 
 
@@ -102,41 +103,49 @@ def dump_svt(
             fp.write(export_without_lore_en)
 
 
-def generate_exports(
-    region_path: dict[Region, DirectoryPath]
+async def generate_exports(
+    redis: Redis, region_path: dict[Region, DirectoryPath]
 ) -> None:  # pragma: no cover
     if settings.export_all_nice:
         for region in region_path:
             start_time = time.perf_counter()
             conn = engines[region].connect()
             logger.info(f"Exporting {region} data …")
-            all_equip_data_lore = (
-                get_nice_equip_model(conn, region, svt_id, Language.jp, lore=True)
+            all_equip_data_lore = [
+                await get_nice_equip_model(
+                    conn, redis, region, svt_id, Language.jp, lore=True
+                )
                 for svt_id in masters[region].mstSvtEquipCollectionNo.values()
-            )
-            all_servant_data_lore = (
-                get_nice_servant_model(conn, region, svt_id, Language.jp, lore=True)
+            ]
+            all_servant_data_lore = [
+                await get_nice_servant_model(
+                    conn, redis, region, svt_id, Language.jp, lore=True
+                )
                 for svt_id in masters[region].mstSvtServantCollectionNo.values()
-            )
+            ]
             all_item_data = (
                 get_nice_item_from_raw(region, raw_item)
                 for raw_item in get_all_items(conn)
             )
-            all_mc_data = (
-                get_nice_mystic_code(conn, region, mc_id, Language.jp)
+            all_mc_data = [
+                get_nice_mystic_code(conn, redis, region, mc_id, Language.jp)
                 for mc_id in masters[region].mstEquipId
-            )
-            all_cc_data = (
-                get_nice_command_code(conn, region, cc_id, Language.jp)
+            ]
+            all_cc_data = [
+                get_nice_command_code(conn, redis, region, cc_id, Language.jp)
                 for cc_id in masters[region].mstCommandCodeId
-            )
+            ]
             all_basic_servant_data = sort_by_collection_no(
-                get_basic_servant(region, svt_id)
-                for svt_id in masters[region].mstSvtServantCollectionNo.values()
+                [
+                    await get_basic_servant(redis, region, svt_id)
+                    for svt_id in masters[region].mstSvtServantCollectionNo.values()
+                ]
             )
             all_basic_equip_data = sort_by_collection_no(
-                get_basic_equip(region, svt_id)
-                for svt_id in masters[region].mstSvtEquipCollectionNo.values()
+                [
+                    await get_basic_equip(redis, region, svt_id)
+                    for svt_id in masters[region].mstSvtEquipCollectionNo.values()
+                ]
             )
             all_basic_mc_data = (
                 get_basic_mc(region, mc_id, Language.jp)
@@ -181,18 +190,18 @@ def generate_exports(
                     get_basic_cc(region, cc_id, Language.en)
                     for cc_id in masters[region].mstCommandCodeId
                 )
-                all_cc_data_en = (
-                    get_nice_command_code(conn, region, cc_id, Language.en)
+                all_cc_data_en = [
+                    get_nice_command_code(conn, redis, region, cc_id, Language.en)
                     for cc_id in masters[region].mstCommandCodeId
-                )
-                all_basic_mc_en = (
+                ]
+                all_basic_mc_en = [
                     get_basic_mc(region, mc_id, Language.en)
                     for mc_id in masters[region].mstEquipId
-                )
-                all_mc_data_en = (
-                    get_nice_mystic_code(conn, region, mc_id, Language.en)
+                ]
+                all_mc_data_en = [
+                    get_nice_mystic_code(conn, redis, region, mc_id, Language.en)
                     for mc_id in masters[region].mstEquipId
-                )
+                ]
                 output_files = [
                     ("basic_servant_lang_en", all_basic_servant_en, dump_orjson),
                     ("basic_equip_lang_en", all_basic_equip_en, dump_orjson),
@@ -240,23 +249,20 @@ def update_master_repo_info(region_path: dict[Region, DirectoryPath]) -> None:
             )
 
 
-def clear_bloom_redis_cache() -> None:  # pragma: no cover
+async def clear_bloom_redis_cache(redis: Redis) -> None:  # pragma: no cover
     # If DEL doesn't work with the redis setup, consider calling bloom instead of redis.
     # https://github.com/valeriansaliou/bloom#can-cache-be-programatically-expired
     # The hash for bucket name "fgo-game-data-api" is "92b89e16"
-    if settings.redis_host:
-        redis_server = redis.Redis(
-            settings.redis_host, port=settings.redis_port, db=settings.redis_db
-        )
-        key_count = 0
-        for key in redis_server.scan_iter(f"bloom:{settings.bloom_shard}:c:*"):
-            redis_server.delete(key)
-            key_count += 1
-        logger.info(f"Cleared {key_count} redis keys.")
+    key_count = 0
+    async for key in redis.iscan(match=f"bloom:{settings.bloom_shard}:c:*"):
+        await redis.delete(key)
+        key_count += 1
+    logger.info(f"Cleared {key_count} bloom redis keys.")
 
 
-def pull_and_update(
-    region_path: dict[Region, DirectoryPath]
+async def pull_and_update(
+    redis: Redis,
+    region_path: dict[Region, DirectoryPath],
 ) -> None:  # pragma: no cover
     logger.info(f"Sleeping {settings.github_webhook_sleep} seconds …")
     time.sleep(settings.github_webhook_sleep)
@@ -270,6 +276,6 @@ def pull_and_update(
     if settings.write_postgres_data:
         update_db(region_path)
     update_masters(region_path)
-    generate_exports(region_path)
+    await generate_exports(redis, region_path)
     update_master_repo_info(region_path)
-    clear_bloom_redis_cache()
+    await clear_bloom_redis_cache(redis)

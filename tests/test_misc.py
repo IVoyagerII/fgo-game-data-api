@@ -1,5 +1,6 @@
 import orjson
 import pytest
+from aioredis import Redis
 from fastapi import HTTPException
 
 from app.core.nice.func import parse_dataVals
@@ -17,8 +18,11 @@ def test_subtitle_svtId() -> None:
     assert get_subtitle_svtId("PLAINDEMO_99100001") == -1
 
 
-def test_parse_dataVals_add_state_6_items() -> None:
-    result = parse_dataVals("[1000,3,3,300,1000,10]", FuncType.ADD_STATE, Region.NA)
+@pytest.mark.asyncio
+async def test_parse_dataVals_add_state_6_items(redis: Redis) -> None:
+    result = await parse_dataVals(
+        redis, Region.NA, FuncType.ADD_STATE, "[1000,3,3,300,1000,10]"
+    )
     assert result == {
         "Rate": 1000,
         "Turn": 3,
@@ -29,16 +33,25 @@ def test_parse_dataVals_add_state_6_items() -> None:
     }
 
 
-def test_parse_dataVals_unknown_datavals(caplog: pytest.LogCaptureFixture) -> None:
-    parse_dataVals("[1000,3,3,300]", FuncType.SUB_STATE, Region.NA)
+@pytest.mark.asyncio
+async def test_parse_dataVals_unknown_datavals(
+    redis: Redis, caplog: pytest.LogCaptureFixture
+) -> None:
+    await parse_dataVals(redis, Region.NA, FuncType.SUB_STATE, "[1000,3,3,300]")
     assert (
         "Some datavals weren't parsed for func type 2: "
         "[1000,3,3,300] => {'Rate': 1000, 'Value': 3, 'Value2': 3}" in caplog.text
     )
 
 
-def test_parse_dataVals_class_drop_up_rate() -> None:
-    result = parse_dataVals("[2,400,80017]", FuncType.CLASS_DROP_UP, Region.NA)
+@pytest.mark.asyncio
+async def test_parse_dataVals_class_drop_up_rate(redis: Redis) -> None:
+    result = await parse_dataVals(
+        redis,
+        Region.NA,
+        FuncType.CLASS_DROP_UP,
+        "[2,400,80017]",
+    )
     result = {k: v for k, v in result.items() if "aa" not in k}
     assert result == {
         "EventId": 80017,
@@ -59,10 +72,11 @@ cases_datavals_fail = [
 ]
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("dataVals", cases_datavals_fail)
-def test_parse_datavals_fail_list_str(dataVals: str) -> None:
+async def test_parse_datavals_fail_list_str(redis: Redis, dataVals: str) -> None:
     with pytest.raises(HTTPException):
-        parse_dataVals(dataVals, 1, Region.NA)
+        await parse_dataVals(redis, Region.NA, 1, dataVals)
 
 
 def test_reverseDepth_str_comparison() -> None:
@@ -99,17 +113,23 @@ def test_sort_by_collection_no() -> None:
     assert result == [first_item, second_item]
 
 
-def test_list_exclude() -> None:
+@pytest.mark.asyncio
+async def test_list_exclude(redis: Redis) -> None:
     with engines[Region.JP].connect() as conn:
-        test_data = get_nice_servant_model(conn, Region.JP, 504500, Language.en)
+        test_data = await get_nice_servant_model(
+            conn, redis, Region.JP, 504500, Language.en
+        )
         excluded_keys = {"profile"}
         json_data = list_string_exclude([test_data], exclude=excluded_keys)
         for key in excluded_keys:
             assert key not in orjson.loads(json_data)
 
 
-def test_lang_en_export() -> None:
+@pytest.mark.asyncio
+async def test_lang_en_export(redis: Redis) -> None:
     with engines[Region.JP].connect() as conn:
-        jp_nice_servant = get_nice_servant_model(conn, Region.JP, 202900, Language.jp)
+        jp_nice_servant = await get_nice_servant_model(
+            conn, redis, Region.JP, 202900, Language.jp
+        )
         jp_nice_servant_with_en_name = get_lang_en(jp_nice_servant)
         assert jp_nice_servant_with_en_name.name == "Asagami Fujino"

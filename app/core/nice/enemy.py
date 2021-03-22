@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...schemas.common import Language, Region
@@ -175,7 +176,8 @@ class EnemyDeckInfo:
         return hash((self.deckType, self.deck.id))
 
 
-def get_quest_enemy(
+async def get_quest_enemy(
+    redis: Redis,
     region: Region,
     deck_svt_info: EnemyDeckInfo,
     user_svt: UserSvt,
@@ -183,10 +185,7 @@ def get_quest_enemy(
     all_enemy_tds: MultipleNiceTds,
     lang: Language = Language.jp,
 ) -> QuestEnemy:
-    basic_svt = get_basic_servant(region, user_svt.svtId, lang)
-    if user_svt.npcSvtClassId != 0:
-        basic_svt.className = CLASS_NAME[user_svt.npcSvtClassId]
-
+    basic_svt = await get_basic_servant(redis, region, user_svt.svtId, lang)
     deck_svt = deck_svt_info.deck
 
     return QuestEnemy(
@@ -267,8 +266,9 @@ def get_enemies_in_stage(
     return stage_enemies
 
 
-def get_quest_enemies(
+async def get_quest_enemies(
     conn: Connection,
+    redis: Redis,
     region: Region,
     quest_detail: QuestDetail,
     lang: Language = Language.jp,
@@ -303,8 +303,10 @@ def get_quest_enemies(
                 all_skill_ids.add(SkillSvt(skill_id, user_svt.svtId))
 
     # Get all skills and NPs data at once to avoid calling the DB a lot of times
-    all_skills = get_multiple_nice_skills(conn, region, all_skill_ids, lang)
-    all_tds = get_multiple_nice_tds(conn, region, all_td_ids)
+    all_skills = await get_multiple_nice_skills(
+        conn, redis, region, all_skill_ids, lang
+    )
+    all_tds = await get_multiple_nice_tds(conn, redis, region, all_td_ids)
 
     out_enemies: list[list[QuestEnemy]] = []
     for enemy_deck in quest_detail.enemyDeck:
@@ -321,7 +323,8 @@ def get_quest_enemies(
 
         stage_nice_enemies: list[QuestEnemy] = []
         for deck_svt_info in get_enemies_in_stage(enemy_decks, npc_id_map):
-            nice_enemy = get_quest_enemy(
+            nice_enemy = await get_quest_enemy(
+                redis=redis,
                 region=region,
                 deck_svt_info=deck_svt_info,
                 user_svt=user_svt_id[deck_svt_info.deck.userSvtId],

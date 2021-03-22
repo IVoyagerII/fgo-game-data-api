@@ -1,5 +1,6 @@
 from typing import Optional
 
+from aioredis import Redis
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.engine import Connection
 
@@ -28,7 +29,7 @@ from ..schemas.search import (
     SvtSearchQueryParams,
     TdSearchParams,
 )
-from .deps import get_db
+from .deps import get_db, get_redis
 from .utils import get_error_code, item_response, language_parameter, list_response
 
 
@@ -54,11 +55,16 @@ async def find_servant(
     search_param: ServantSearchQueryParams = Depends(ServantSearchQueryParams),
     lang: Optional[Language] = None,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_servant(conn, search_param, limit=10000)
     return list_response(
-        basic.get_basic_servant(search_param.region, mstSvt.id, lang, mstSvt)
-        for mstSvt in matches
+        [
+            await basic.get_basic_servant(
+                redis, search_param.region, mstSvt.id, lang, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -90,12 +96,16 @@ if settings.documentation_all_nice:
     responses=get_error_code([400, 403]),
 )
 async def get_servant(
-    region: Region, servant_id: int, lang: Optional[Language] = None
+    region: Region,
+    servant_id: int,
+    lang: Optional[Language] = None,
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if servant_id in masters[region].mstSvtServantCollectionNo:
-        servant_id = masters[region].mstSvtServantCollectionNo[servant_id]
+    servant_id = masters[region].mstSvtServantCollectionNo.get(servant_id, servant_id)
     if servant_id in masters[region].mstSvtServantCollectionNo.values():
-        return item_response(basic.get_basic_servant(region, servant_id, lang))
+        return item_response(
+            await basic.get_basic_servant(redis, region, servant_id, lang)
+        )
     else:
         raise HTTPException(status_code=404, detail="Servant not found")
 
@@ -113,11 +123,16 @@ async def find_equip(
     search_param: EquipSearchQueryParams = Depends(EquipSearchQueryParams),
     lang: Optional[Language] = None,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_equip(conn, search_param, limit=10000)
     return list_response(
-        basic.get_basic_equip(search_param.region, mstSvt.id, lang, mstSvt)
-        for mstSvt in matches
+        [
+            await basic.get_basic_equip(
+                redis, search_param.region, mstSvt.id, lang, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -148,12 +163,14 @@ if settings.documentation_all_nice:
     responses=get_error_code([400, 403]),
 )
 async def get_equip(
-    region: Region, equip_id: int, lang: Optional[Language] = None
+    region: Region,
+    equip_id: int,
+    lang: Optional[Language] = None,
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if equip_id in masters[region].mstSvtEquipCollectionNo:
-        equip_id = masters[region].mstSvtEquipCollectionNo[equip_id]
+    equip_id = masters[region].mstSvtEquipCollectionNo.get(equip_id, equip_id)
     if equip_id in masters[region].mstSvtEquipCollectionNo.values():
-        return item_response(basic.get_basic_equip(region, equip_id, lang))
+        return item_response(await basic.get_basic_equip(redis, region, equip_id, lang))
     else:
         raise HTTPException(status_code=404, detail="Equip not found")
 
@@ -171,11 +188,16 @@ async def find_svt(
     search_param: SvtSearchQueryParams = Depends(SvtSearchQueryParams),
     lang: Optional[Language] = None,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_servant(conn, search_param, limit=10000)
     return list_response(
-        basic.get_basic_servant(search_param.region, mstSvt.id, lang, mstSvt)
-        for mstSvt in matches
+        [
+            await basic.get_basic_servant(
+                redis, search_param.region, mstSvt.id, lang, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -188,7 +210,10 @@ async def find_svt(
     responses=get_error_code([400, 403]),
 )
 async def get_svt(
-    region: Region, svt_id: int, lang: Language = Depends(language_parameter)
+    region: Region,
+    svt_id: int,
+    lang: Language = Depends(language_parameter),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get svt info from ID
@@ -196,10 +221,7 @@ async def get_svt(
     Only use actual IDs for lookup. Does not convert from collectionNo.
     The endpoint is not limited to servants or equips ids.
     """
-    if svt_id in masters[region].mstSvtId:
-        return item_response(basic.get_basic_servant(region, svt_id, lang))
-    else:
-        raise HTTPException(status_code=404, detail="Svt not found")
+    return item_response(await basic.get_basic_servant(redis, region, svt_id, lang))
 
 
 get_mc_description = "Get basic Mystic Code info from ID"
@@ -288,13 +310,21 @@ async def find_skill(
     reverse: bool = False,
     lang: Language = Depends(language_parameter),
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_skill(conn, search_param, limit=10000)
     return list_response(
-        basic.get_basic_skill(
-            search_param.region, mstSkill.id, lang, reverse, mstSkill=mstSkill
-        )
-        for mstSkill in matches
+        [
+            await basic.get_basic_skill(
+                redis,
+                search_param.region,
+                mstSkill.id,
+                lang,
+                reverse,
+                mstSkill=mstSkill,
+            )
+            for mstSkill in matches
+        ]
     )
 
 
@@ -312,9 +342,12 @@ async def get_skill(
     skill_id: int,
     reverse: bool = False,
     lang: Language = Depends(language_parameter),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     if skill_id in masters[region].mstSkillId:
-        return item_response(basic.get_basic_skill(region, skill_id, lang, reverse))
+        return item_response(
+            await basic.get_basic_skill(redis, region, skill_id, lang, reverse)
+        )
     else:
         raise HTTPException(status_code=404, detail="Skill not found")
 
@@ -340,13 +373,16 @@ async def find_td(
     reverse: bool = False,
     lang: Language = Depends(language_parameter),
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_td(conn, search_param, limit=10000)
     return list_response(
-        basic.get_basic_td(
-            search_param.region, td.id, lang, reverse, mstTreasureDevice=td
-        )
-        for td in matches
+        [
+            await basic.get_basic_td(
+                redis, search_param.region, td.id, lang, reverse, mstTreasureDevice=td
+            )
+            for td in matches
+        ]
     )
 
 
@@ -364,9 +400,12 @@ async def get_td(
     np_id: int,
     reverse: bool = False,
     lang: Language = Depends(language_parameter),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     if np_id in masters[region].mstTreasureDeviceId:
-        return item_response(basic.get_basic_td(region, np_id, lang, reverse))
+        return item_response(
+            await basic.get_basic_td(redis, region, np_id, lang, reverse)
+        )
     else:
         raise HTTPException(status_code=404, detail="NP not found")
 
@@ -394,13 +433,16 @@ async def find_function(
     reverseDepth: ReverseDepth = ReverseDepth.skillNp,
     lang: Language = Depends(language_parameter),
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_func(conn, search_param, limit=10000)
     return list_response(
-        basic.get_basic_function_from_raw(
-            search_param.region, mstFunc, lang, reverse, reverseDepth
-        )
-        for mstFunc in matches
+        [
+            await basic.get_basic_function_from_raw(
+                redis, search_param.region, mstFunc, lang, reverse, reverseDepth
+            )
+            for mstFunc in matches
+        ]
     )
 
 
@@ -420,13 +462,13 @@ async def get_function(
     reverse: bool = False,
     reverseDepth: ReverseDepth = ReverseDepth.skillNp,
     lang: Language = Depends(language_parameter),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if func_id in masters[region].mstFuncId:
-        return item_response(
-            basic.get_basic_function(region, func_id, lang, reverse, reverseDepth)
+    return item_response(
+        await basic.get_basic_function(
+            redis, region, func_id, lang, reverse, reverseDepth
         )
-    else:
-        raise HTTPException(status_code=404, detail="Function not found")
+    )
 
 
 buff_reverse_lang_description = """
@@ -452,13 +494,16 @@ async def find_buff(
     reverseDepth: ReverseDepth = ReverseDepth.function,
     lang: Language = Depends(language_parameter),
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_buff(conn, search_param, limit=10000)
     return list_response(
-        basic.get_basic_buff_from_raw(
-            search_param.region, mstBuff, lang, reverse, reverseDepth
-        )
-        for mstBuff in matches
+        [
+            await basic.get_basic_buff_from_raw(
+                redis, search_param.region, mstBuff, lang, reverse, reverseDepth
+            )
+            for mstBuff in matches
+        ]
     )
 
 
@@ -477,13 +522,11 @@ async def get_buff(
     reverse: bool = False,
     reverseDepth: ReverseDepth = ReverseDepth.function,
     lang: Language = Depends(language_parameter),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if buff_id in masters[region].mstBuffId:
-        return item_response(
-            basic.get_basic_buff(region, buff_id, lang, reverse, reverseDepth)
-        )
-    else:
-        raise HTTPException(status_code=404, detail="Buff not found")
+    return item_response(
+        await basic.get_basic_buff(redis, region, buff_id, lang, reverse, reverseDepth)
+    )
 
 
 @router.get(

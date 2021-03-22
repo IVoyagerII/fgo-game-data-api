@@ -1,10 +1,12 @@
 from typing import Iterable, Optional
 
+from aioredis import Redis
 from fastapi import HTTPException
 from sqlalchemy.engine import Connection
 
 from ..data.gamedata import masters
 from ..db.helpers import ai, event, fetch, item, quest, skill, svt, td
+from ..redis.helpers import pydantic_object
 from ..schemas.common import Region, ReverseDepth
 from ..schemas.enums import FUNC_VALS_NOT_BUFF
 from ..schemas.gameenums import CondType, PurchaseType, VoiceCondType
@@ -18,6 +20,7 @@ from ..schemas.raw import (
     EventEntity,
     FunctionEntity,
     FunctionEntityNoReverse,
+    ItemEntity,
     MstBgm,
     MstBoxGacha,
     MstBuff,
@@ -44,6 +47,7 @@ from ..schemas.raw import (
     MstFunc,
     MstGift,
     MstIllustrator,
+    MstItem,
     MstMap,
     MstShop,
     MstSpot,
@@ -79,17 +83,22 @@ from ..schemas.raw import (
 from . import reverse as reverse_ids
 
 
-def get_buff_entity_no_reverse(
-    region: Region, buff_id: int, mstBuff: Optional[MstBuff] = None
+async def get_buff_entity_no_reverse(
+    redis: Redis, region: Region, buff_id: int, mstBuff: Optional[MstBuff] = None
 ) -> BuffEntityNoReverse:
-    buff_entity = BuffEntityNoReverse(
-        mstBuff=mstBuff if mstBuff else masters[region].mstBuffId[buff_id]
-    )
-    return buff_entity
+    if mstBuff:
+        return BuffEntityNoReverse(mstBuff=mstBuff)
+
+    redis_buff = await pydantic_object.fetch_id(redis, region, MstBuff, buff_id)
+    if redis_buff:
+        return BuffEntityNoReverse(mstBuff=redis_buff)
+    else:
+        raise HTTPException(status_code=404, detail="Buff not found")
 
 
-def get_buff_entity(
+async def get_buff_entity(
     conn: Connection,
+    redis: Redis,
     region: Region,
     buff_id: int,
     reverse: bool = False,
@@ -97,40 +106,52 @@ def get_buff_entity(
     mstBuff: Optional[MstBuff] = None,
 ) -> BuffEntity:
     buff_entity = BuffEntity.parse_obj(
-        get_buff_entity_no_reverse(region, buff_id, mstBuff)
+        await get_buff_entity_no_reverse(redis, region, buff_id, mstBuff)
     )
     if reverse and reverseDepth >= ReverseDepth.function:
         buff_reverse = ReversedBuff(
-            function=(
-                get_func_entity(conn, region, func_id, reverse, reverseDepth)
+            function=[
+                await get_func_entity(
+                    conn, redis, region, func_id, reverse, reverseDepth
+                )
                 for func_id in reverse_ids.buff_to_func(region, buff_id)
-            )
+            ]
         )
         buff_entity.reverse = ReversedBuffType(raw=buff_reverse)
     return buff_entity
 
 
-def get_func_entity_no_reverse(
+async def get_func_entity_no_reverse(
+    redis: Redis,
     region: Region,
     func_id: int,
     expand: bool = False,
     mstFunc: Optional[MstFunc] = None,
 ) -> FunctionEntityNoReverse:
+    if not mstFunc:
+        redis_func = await pydantic_object.fetch_id(redis, region, MstFunc, func_id)
+        if redis_func:
+            mstFunc = redis_func
+        else:
+            raise HTTPException(status_code=404, detail="Function not found")
+
     func_entity = FunctionEntityNoReverse(
-        mstFunc=mstFunc if mstFunc else masters[region].mstFuncId[func_id],
+        mstFunc=mstFunc,
         mstFuncGroup=masters[region].mstFuncGroupId.get(func_id, []),
     )
+
     if expand and func_entity.mstFunc.funcType not in FUNC_VALS_NOT_BUFF:
         func_entity.mstFunc.expandedVals = [
-            get_buff_entity_no_reverse(region, buff_id)
+            await get_buff_entity_no_reverse(redis, region, buff_id)
             for buff_id in func_entity.mstFunc.vals
-            if buff_id in masters[region].mstBuffId
+            if await pydantic_object.check_id(redis, region, MstBuff, buff_id)
         ]
     return func_entity
 
 
-def get_func_entity(
+async def get_func_entity(
     conn: Connection,
+    redis: Redis,
     region: Region,
     func_id: int,
     reverse: bool = False,
@@ -139,25 +160,31 @@ def get_func_entity(
     mstFunc: Optional[MstFunc] = None,
 ) -> FunctionEntity:
     func_entity = FunctionEntity.parse_obj(
-        get_func_entity_no_reverse(region, func_id, expand, mstFunc)
+        await get_func_entity_no_reverse(redis, region, func_id, expand, mstFunc)
     )
     if reverse and reverseDepth >= ReverseDepth.skillNp:
         func_reverse = ReversedFunction(
-            skill=(
-                get_skill_entity(conn, region, skill_id, reverse, reverseDepth)
+            skill=[
+                await get_skill_entity(
+                    conn, redis, region, skill_id, reverse, reverseDepth
+                )
                 for skill_id in reverse_ids.func_to_skillId(region, func_id)
-            ),
-            NP=(
-                get_td_entity(conn, region, td_id, reverse, reverseDepth)
+            ],
+            NP=[
+                await get_td_entity(conn, redis, region, td_id, reverse, reverseDepth)
                 for td_id in reverse_ids.func_to_tdId(region, func_id)
-            ),
+            ],
         )
         func_entity.reverse = ReversedFunctionType(raw=func_reverse)
     return func_entity
 
 
-def get_skill_entity_no_reverse_many(
-    conn: Connection, region: Region, skill_ids: Iterable[int], expand: bool = False
+async def get_skill_entity_no_reverse_many(
+    conn: Connection,
+    redis: Redis,
+    region: Region,
+    skill_ids: Iterable[int],
+    expand: bool = False,
 ) -> list[SkillEntityNoReverse]:
     if not skill_ids:
         return []
@@ -167,23 +194,28 @@ def get_skill_entity_no_reverse_many(
             for skill_entity in skill_entities:
                 for skillLv in skill_entity.mstSkillLv:
                     skillLv.expandedFuncId = [
-                        get_func_entity_no_reverse(region, func_id, expand)
+                        await get_func_entity_no_reverse(redis, region, func_id, expand)
                         for func_id in skillLv.funcId
-                        if func_id in masters[region].mstFuncId
+                        if await pydantic_object.check_id(
+                            redis, region, MstFunc, func_id
+                        )
                     ]
         return skill_entities
     else:
         raise HTTPException(status_code=404, detail="Skill not found")
 
 
-def get_skill_entity_no_reverse(
-    conn: Connection, region: Region, skill_id: int, expand: bool = False
+async def get_skill_entity_no_reverse(
+    conn: Connection, redis: Redis, region: Region, skill_id: int, expand: bool = False
 ) -> SkillEntityNoReverse:
-    return get_skill_entity_no_reverse_many(conn, region, [skill_id], expand)[0]
+    return (
+        await get_skill_entity_no_reverse_many(conn, redis, region, [skill_id], expand)
+    )[0]
 
 
-def get_skill_entity(
+async def get_skill_entity(
     conn: Connection,
+    redis: Redis,
     region: Region,
     skill_id: int,
     reverse: bool = False,
@@ -191,32 +223,36 @@ def get_skill_entity(
     expand: bool = False,
 ) -> SkillEntity:
     skill_entity = SkillEntity.parse_obj(
-        get_skill_entity_no_reverse(conn, region, skill_id, expand)
+        await get_skill_entity_no_reverse(conn, redis, region, skill_id, expand)
     )
 
     if reverse and reverseDepth >= ReverseDepth.servant:
         activeSkills = {svt_skill.svtId for svt_skill in skill_entity.mstSvtSkill}
         passiveSkills = reverse_ids.passive_to_svtId(region, skill_id)
         skill_reverse = ReversedSkillTd(
-            servant=(
-                get_servant_entity(conn, region, svt_id)
+            servant=[
+                await get_servant_entity(conn, redis, region, svt_id)
                 for svt_id in activeSkills | passiveSkills
-            ),
-            MC=(
-                get_mystic_code_entity(conn, region, mc_id)
+            ],
+            MC=[
+                await get_mystic_code_entity(conn, redis, region, mc_id)
                 for mc_id in reverse_ids.skill_to_MCId(region, skill_id)
-            ),
-            CC=(
-                get_command_code_entity(conn, region, cc_id)
+            ],
+            CC=[
+                await get_command_code_entity(conn, redis, region, cc_id)
                 for cc_id in reverse_ids.skill_to_CCId(region, skill_id)
-            ),
+            ],
         )
         skill_entity.reverse = ReversedSkillTdType(raw=skill_reverse)
     return skill_entity
 
 
-def get_td_entity_no_reverse_many(
-    conn: Connection, region: Region, td_ids: Iterable[int], expand: bool = False
+async def get_td_entity_no_reverse_many(
+    conn: Connection,
+    redis: Redis,
+    region: Region,
+    td_ids: Iterable[int],
+    expand: bool = False,
 ) -> list[TdEntityNoReverse]:
     if not td_ids:
         return []
@@ -226,23 +262,28 @@ def get_td_entity_no_reverse_many(
             for td_entity in td_entities:
                 for tdLv in td_entity.mstTreasureDeviceLv:
                     tdLv.expandedFuncId = [
-                        get_func_entity_no_reverse(region, func_id, expand)
+                        await get_func_entity_no_reverse(redis, region, func_id, expand)
                         for func_id in tdLv.funcId
-                        if func_id in masters[region].mstFuncId
+                        if await pydantic_object.check_id(
+                            redis, region, MstFunc, func_id
+                        )
                     ]
         return td_entities
     else:
         raise HTTPException(status_code=404, detail="NP not found")
 
 
-def get_td_entity_no_reverse(
-    conn: Connection, region: Region, td_id: int, expand: bool = False
+async def get_td_entity_no_reverse(
+    conn: Connection, redis: Redis, region: Region, td_id: int, expand: bool = False
 ) -> TdEntityNoReverse:
-    return get_td_entity_no_reverse_many(conn, region, [td_id], expand)[0]
+    return (await get_td_entity_no_reverse_many(conn, redis, region, [td_id], expand))[
+        0
+    ]
 
 
-def get_td_entity(
+async def get_td_entity(
     conn: Connection,
+    redis: Redis,
     region: Region,
     td_id: int,
     reverse: bool = False,
@@ -250,22 +291,23 @@ def get_td_entity(
     expand: bool = False,
 ) -> TdEntity:
     td_entity = TdEntity.parse_obj(
-        get_td_entity_no_reverse(conn, region, td_id, expand)
+        await get_td_entity_no_reverse(conn, redis, region, td_id, expand)
     )
 
     if reverse and reverseDepth >= ReverseDepth.servant:
         td_reverse = ReversedSkillTd(
-            servant=(
-                get_servant_entity(conn, region, svt_id.svtId)
+            servant=[
+                await get_servant_entity(conn, redis, region, svt_id.svtId)
                 for svt_id in td_entity.mstSvtTreasureDevice
-            )
+            ]
         )
         td_entity.reverse = ReversedSkillTdType(raw=td_reverse)
     return td_entity
 
 
-def get_servant_entity(
+async def get_servant_entity(
     conn: Connection,
+    redis: Redis,
     region: Region,
     servant_id: int,
     expand: bool = False,
@@ -295,14 +337,18 @@ def get_servant_entity(
     skill_ids = [
         skill.skillId for skill in skill.get_mstSvtSkill(conn, svt_id=servant_id)
     ]
-    mstSkill = get_skill_entity_no_reverse_many(conn, region, skill_ids, expand)
+    mstSkill = await get_skill_entity_no_reverse_many(
+        conn, redis, region, skill_ids, expand
+    )
 
     td_ids = [
         td.treasureDeviceId
         for td in td.get_mstSvtTreasureDevice(conn, svt_id=servant_id)
         if td.treasureDeviceId != EXTRA_ATTACK_TD_ID
     ]
-    mstTreasureDevice = get_td_entity_no_reverse_many(conn, region, td_ids, expand)
+    mstTreasureDevice = await get_td_entity_no_reverse_many(
+        conn, redis, region, td_ids, expand
+    )
 
     svt_entity = ServantEntity(
         mstSvt=svt_db,
@@ -325,8 +371,8 @@ def get_servant_entity(
     )
 
     if expand:
-        svt_entity.mstSvt.expandedClassPassive = get_skill_entity_no_reverse_many(
-            conn, region, svt_entity.mstSvt.classPassive, expand
+        svt_entity.mstSvt.expandedClassPassive = await get_skill_entity_no_reverse_many(
+            conn, redis, region, svt_entity.mstSvt.classPassive, expand
         )
 
     if lore:
@@ -394,15 +440,17 @@ def get_servant_entity(
     return svt_entity
 
 
-def get_mystic_code_entity(
-    conn: Connection, region: Region, mc_id: int, expand: bool = False
+async def get_mystic_code_entity(
+    conn: Connection, redis: Redis, region: Region, mc_id: int, expand: bool = False
 ) -> MysticCodeEntity:
     mc_db = fetch.get_one(conn, MstEquip, mc_id)
     if not mc_db:
         raise HTTPException(status_code=404, detail="Mystic Code not found")
 
     skill_ids = [mc.skillId for mc in fetch.get_all(conn, MstEquipSkill, mc_id)]
-    mstSkill = get_skill_entity_no_reverse_many(conn, region, skill_ids, expand)
+    mstSkill = await get_skill_entity_no_reverse_many(
+        conn, redis, region, skill_ids, expand
+    )
 
     mc_entity = MysticCodeEntity(
         mstEquip=mc_db,
@@ -412,8 +460,8 @@ def get_mystic_code_entity(
     return mc_entity
 
 
-def get_command_code_entity(
-    conn: Connection, region: Region, cc_id: int, expand: bool = False
+async def get_command_code_entity(
+    conn: Connection, redis: Redis, region: Region, cc_id: int, expand: bool = False
 ) -> CommandCodeEntity:
     cc_db = fetch.get_one(conn, MstCommandCode, cc_id)
     if not cc_db:
@@ -422,7 +470,9 @@ def get_command_code_entity(
     skill_ids = [
         cc_skill.skillId for cc_skill in fetch.get_all(conn, MstCommandCodeSkill, cc_id)
     ]
-    mstSkill = get_skill_entity_no_reverse_many(conn, region, skill_ids, expand)
+    mstSkill = await get_skill_entity_no_reverse_many(
+        conn, redis, region, skill_ids, expand
+    )
 
     mstCommandCodeComment = fetch.get_all(conn, MstCommandCodeComment, cc_id)[0]
     mstIllustrator = fetch.get_one(
@@ -435,6 +485,14 @@ def get_command_code_entity(
         mstCommandCodeComment=mstCommandCodeComment,
         mstIllustrator=mstIllustrator,
     )
+
+
+async def get_item_entity(redis: Redis, region: Region, item_id: int) -> ItemEntity:
+    item_redis = await pydantic_object.fetch_id(redis, region, MstItem, item_id)
+    if not item_redis:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    return ItemEntity(mstItem=item_redis)
 
 
 def get_war_entity(conn: Connection, war_id: int) -> WarEntity:

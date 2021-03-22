@@ -17,11 +17,9 @@ settings = Settings()
 masters: dict[Region, Master] = {}
 MASTER_WITH_ID = {
     "mstSvt",
-    "mstBuff",
     "mstFunc",
     "mstSkill",
     "mstTreasureDevice",
-    "mstItem",
     "mstEquip",
     "mstCommandCode",
     "mstEvent",
@@ -33,7 +31,6 @@ MASTER_WITHOUT_ID = {
     "mstClosedMessage",
     "mstClassRelationOverwrite",
     "mstStage",
-    "mstGift",
     "mstShop",
     "mstShopRelease",
     "mstAi",
@@ -45,7 +42,6 @@ SVT_STUFFS = {
     "mstSvtGroup",
     "mstSvtComment",
     "mstSvtLimit",
-    "mstSvtLimitAdd",
     "mstCombineSkill",
     "mstCombineLimit",
     "mstCombineCostume",
@@ -157,18 +153,11 @@ def update_masters(region_path: dict[Region, DirectoryPath]) -> None:
             if svtLimit["svtId"] not in master["mstSvtLimitFirst"]:
                 master["mstSvtLimitFirst"][svtLimit["svtId"]] = svtLimit
 
-        master["mstSvtLimitAddIndividutality"] = defaultdict(list)
-        for svtLimitAdd in master["mstSvtLimitAdd"]:
-            master["mstSvtLimitAddIndividutality"][svtLimitAdd["svtId"]].extend(
-                svtLimitAdd["individuality"]
-            )
-
         for masters_table, source_table, lookup_id in (
             ("mstClassRelationOverwriteId", "mstClassRelationOverwrite", "id"),
             ("mstSvtGroupSvtId", "mstSvtGroup", "svtId"),
             ("mstSvtSkillSvtId", "mstSvtSkill", "svtId"),
             ("mstWarEventId", "mstWar", "eventId"),
-            ("mstGiftId", "mstGift", "id"),
             ("mstShopEventId", "mstShop", "eventId"),
             ("mstShopReleaseShopId", "mstShopRelease", "shopId"),
             ("mstFuncGroupId", "mstFuncGroup", "funcId"),

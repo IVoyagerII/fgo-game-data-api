@@ -1,6 +1,7 @@
 from typing import Any, Optional
 
 import orjson
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ....config import Settings
@@ -76,8 +77,9 @@ def get_nice_costume(costume: MstSvtCostume) -> NiceCostume:
     return NiceCostume(**costume.dict())
 
 
-def get_nice_servant(
+async def get_nice_servant(
     conn: Connection,
+    redis: Redis,
     region: Region,
     svt_id: int,
     lang: Language,
@@ -85,8 +87,8 @@ def get_nice_servant(
     mstSvt: Optional[MstSvt] = None,
 ) -> dict[str, Any]:
     # Get expanded servant entity to get function and buff details
-    raw_svt = raw.get_servant_entity(
-        conn, region, svt_id, expand=True, lore=lore, mstSvt=mstSvt
+    raw_svt = await raw.get_servant_entity(
+        conn, redis, region, svt_id, expand=True, lore=lore, mstSvt=mstSvt
     )
     first_svt_limit = raw_svt.mstSvtLimit[0]
 
@@ -182,8 +184,8 @@ def get_nice_servant(
 
     nice_data["ascensionMaterials"] = {
         combineLimit.svtLimit: {
-            "items": get_nice_item_amount(
-                region, combineLimit.itemIds, combineLimit.itemNums
+            "items": await get_nice_item_amount(
+                redis, region, combineLimit.itemIds, combineLimit.itemNums
             ),
             "qp": combineLimit.qp,
         }
@@ -193,8 +195,8 @@ def get_nice_servant(
 
     nice_data["skillMaterials"] = {
         combineSkill.skillLv: {
-            "items": get_nice_item_amount(
-                region, combineSkill.itemIds, combineSkill.itemNums
+            "items": await get_nice_item_amount(
+                redis, region, combineSkill.itemIds, combineSkill.itemNums
             ),
             "qp": combineSkill.qp,
         }
@@ -203,8 +205,8 @@ def get_nice_servant(
 
     nice_data["costumeMaterials"] = {
         costume_ids[combineCostume.costumeId]: {
-            "items": get_nice_item_amount(
-                region, combineCostume.itemIds, combineCostume.itemNums
+            "items": await get_nice_item_amount(
+                redis, region, combineCostume.itemIds, combineCostume.itemNums
             ),
             "qp": combineCostume.qp,
         }
@@ -221,13 +223,17 @@ def get_nice_servant(
     nice_data["skills"] = [
         skill
         for skillEntity in raw_svt.mstSkill
-        for skill in get_nice_skill_with_svt(skillEntity, svt_id, region, lang)
+        for skill in await get_nice_skill_with_svt(
+            redis, skillEntity, svt_id, region, lang
+        )
     ]
 
     nice_data["classPassive"] = [
         skill
         for skillEntity in raw_svt.mstSvt.expandedClassPassive
-        for skill in get_nice_skill_with_svt(skillEntity, svt_id, region, lang)
+        for skill in await get_nice_skill_with_svt(
+            redis, skillEntity, svt_id, region, lang
+        )
     ]
 
     # Filter out dummy TDs that are used by enemy servants
@@ -255,7 +261,7 @@ def get_nice_servant(
     nice_data["noblePhantasms"] = [
         td
         for tdEntity in sorted(playable_tds, key=lambda x: x.mstTreasureDevice.id)
-        for td in get_nice_td(tdEntity, svt_id, region)
+        for td in await get_nice_td(redis, tdEntity, svt_id, region)
     ]
 
     if lore:

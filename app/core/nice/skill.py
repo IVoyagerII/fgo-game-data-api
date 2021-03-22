@@ -2,6 +2,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...config import Settings
@@ -19,8 +20,12 @@ from .func import get_nice_function
 settings = Settings()
 
 
-def get_nice_skill_with_svt(
-    skillEntity: SkillEntityNoReverse, svtId: int, region: Region, lang: Language
+async def get_nice_skill_with_svt(
+    redis: Redis,
+    skillEntity: SkillEntityNoReverse,
+    svtId: int,
+    region: Region,
+    lang: Language,
 ) -> list[dict[str, Any]]:
     nice_skill: dict[str, Any] = {
         "id": skillEntity.mstSkill.id,
@@ -68,7 +73,8 @@ def get_nice_skill_with_svt(
             else None
         )
 
-        nice_func = get_nice_function(
+        nice_func = await get_nice_function(
+            redis,
             region,
             function,
             svals=[skill_lv.svals[funci] for skill_lv in skillEntity.mstSkillLv],
@@ -100,8 +106,8 @@ def get_nice_skill_with_svt(
     return [nice_skill]
 
 
-def get_nice_skill_from_raw(
-    region: Region, raw_skill: SkillEntityNoReverse, lang: Language
+async def get_nice_skill_from_raw(
+    redis: Redis, region: Region, raw_skill: SkillEntityNoReverse, lang: Language
 ) -> NiceSkillReverse:
     svt_list = [svt_skill.svtId for svt_skill in raw_skill.mstSvtSkill]
     if svt_list:
@@ -110,20 +116,23 @@ def get_nice_skill_from_raw(
         svt_id = 0
 
     nice_skill = NiceSkillReverse.parse_obj(
-        get_nice_skill_with_svt(raw_skill, svt_id, region, lang)[0]
+        (await get_nice_skill_with_svt(redis, raw_skill, svt_id, region, lang))[0]
     )
 
     return nice_skill
 
 
-def get_nice_skill_from_id(
+async def get_nice_skill_from_id(
     conn: Connection,
+    redis: Redis,
     region: Region,
     skill_id: int,
     lang: Language,
 ) -> NiceSkillReverse:
-    raw_skill = get_skill_entity_no_reverse(conn, region, skill_id, expand=True)
-    return get_nice_skill_from_raw(region, raw_skill, lang)
+    raw_skill = await get_skill_entity_no_reverse(
+        conn, redis, region, skill_id, expand=True
+    )
+    return await get_nice_skill_from_raw(redis, region, raw_skill, lang)
 
 
 @dataclass(eq=True, frozen=True)
@@ -137,8 +146,9 @@ class SkillSvt:
 MultipleNiceSkills = dict[SkillSvt, NiceSkill]
 
 
-def get_multiple_nice_skills(
+async def get_multiple_nice_skills(
     conn: Connection,
+    redis: Redis,
     region: Region,
     skill_svts: Iterable[SkillSvt],
     lang: Language,
@@ -147,6 +157,7 @@ def get_multiple_nice_skills(
 
     Args:
         `conn`: DB Connection
+        `redis`: Redis Connection
         `region`: Region
         `skill_svts`: List of skill id - svt id tuple pairs
         `lang`: Language
@@ -154,16 +165,23 @@ def get_multiple_nice_skills(
     Returns:
         Mapping of skill id - svt id tuple to nice skill
     """
+    skill_ids = [skill.skill_id for skill in skill_svts]
     raw_skills = {
         skill.mstSkill.id: skill
-        for skill in get_skill_entity_no_reverse_many(
-            conn, region, [skill.skill_id for skill in skill_svts], expand=True
+        for skill in await get_skill_entity_no_reverse_many(
+            conn, redis, region, skill_ids, expand=True
         )
     }
     return {
         skill_svt: NiceSkill.parse_obj(
-            get_nice_skill_with_svt(
-                raw_skills[skill_svt.skill_id], skill_svt.svt_id, region, lang
+            (
+                await get_nice_skill_with_svt(
+                    redis,
+                    raw_skills[skill_svt.skill_id],
+                    skill_svt.svt_id,
+                    region,
+                    lang,
+                )
             )[0]
         )
         for skill_svt in skill_svts

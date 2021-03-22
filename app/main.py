@@ -1,6 +1,7 @@
 import time
 from typing import Awaitable, Callable
 
+import aioredis
 import toml
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import SecretSettings, Settings, logger, project_root
 from .data.gamedata import update_masters
 from .db.load import update_db
+from .redis.load import load_redis_data
 from .routers import basic, nice, raw, secret
 from .schemas.common import Region, RepoInfo
 from .tasks import (
@@ -30,10 +32,6 @@ if settings.write_postgres_data:  # pragma: no cover
 update_masters(REGION_PATHS)
 
 update_master_repo_info(REGION_PATHS)
-
-generate_exports(REGION_PATHS)
-
-clear_bloom_redis_cache()
 
 
 app_short_description = "Provide raw and nicely bundled FGO game data."
@@ -176,6 +174,21 @@ async def add_process_time_header(
     response.headers["Server-Timing"] = f"app;dur={process_time}"
     logger.debug(f"Processed in {process_time}ms.")
     return response
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    redis = await aioredis.create_redis_pool(secrets.redisdsn)
+    await load_redis_data(redis, REGION_PATHS)
+    await generate_exports(redis, REGION_PATHS)
+    await clear_bloom_redis_cache(redis)
+    app.state.redis = redis
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    app.state.redis.close()
+    await app.state.redis.wait_closed()
 
 
 app.include_router(nice.router)

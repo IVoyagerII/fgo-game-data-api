@@ -1,3 +1,4 @@
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...config import Settings
@@ -12,10 +13,10 @@ from .skill import get_nice_skill_with_svt
 settings = Settings()
 
 
-def get_nice_command_code(
-    conn: Connection, region: Region, cc_id: int, lang: Language
+async def get_nice_command_code(
+    conn: Connection, redis: Redis, region: Region, cc_id: int, lang: Language
 ) -> NiceCommandCode:
-    raw_cc = raw.get_command_code_entity(conn, region, cc_id, expand=True)
+    raw_cc = await raw.get_command_code_entity(conn, redis, region, cc_id, expand=True)
 
     base_settings = {"base_url": settings.asset_url, "region": region, "item_id": cc_id}
     nice_cc = NiceCommandCode(
@@ -31,11 +32,13 @@ def get_nice_command_code(
             },
             "faces": {"cc": {cc_id: AssetURL.commandCode.format(**base_settings)}},
         },
-        skills=(
+        skills=[
             skill
             for skillEntity in raw_cc.mstSkill
-            for skill in get_nice_skill_with_svt(skillEntity, cc_id, region, lang)
-        ),
+            for skill in await get_nice_skill_with_svt(
+                redis, skillEntity, cc_id, region, lang
+            )
+        ],
         illustrator=raw_cc.mstIllustrator.name if raw_cc.mstIllustrator else "",
         comment=raw_cc.mstCommandCodeComment.comment,
     )

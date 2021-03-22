@@ -2,6 +2,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...config import Settings
@@ -17,8 +18,8 @@ from .func import get_nice_function
 settings = Settings()
 
 
-def get_nice_td(
-    tdEntity: TdEntityNoReverse, svtId: int, region: Region
+async def get_nice_td(
+    redis: Redis, tdEntity: TdEntityNoReverse, svtId: int, region: Region
 ) -> list[dict[str, Any]]:
     nice_td: dict[str, Any] = {
         "id": tdEntity.mstTreasureDevice.id,
@@ -46,7 +47,8 @@ def get_nice_td(
     nice_td["functions"] = []
 
     for funci, _ in enumerate(tdEntity.mstTreasureDeviceLv[0].funcId):
-        nice_func = get_nice_function(
+        nice_func = await get_nice_function(
+            redis,
             region,
             tdEntity.mstTreasureDeviceLv[0].expandedFuncId[funci],
             svals=[skill_lv.svals[funci] for skill_lv in tdEntity.mstTreasureDeviceLv],
@@ -107,8 +109,9 @@ class TdSvt:
 MultipleNiceTds = dict[TdSvt, NiceTd]
 
 
-def get_multiple_nice_tds(
+async def get_multiple_nice_tds(
     conn: Connection,
+    redis: Redis,
     region: Region,
     td_svts: Iterable[TdSvt],
 ) -> MultipleNiceTds:
@@ -122,15 +125,16 @@ def get_multiple_nice_tds(
     Returns:
         Mapping of skill id - svt id tuple to nice NP
     """
+    td_ids = [td_svt.td_id for td_svt in td_svts]
     raw_tds = {
         td.mstTreasureDevice.id: td
-        for td in get_td_entity_no_reverse_many(
-            conn, region, [td_svt.td_id for td_svt in td_svts], expand=True
+        for td in await get_td_entity_no_reverse_many(
+            conn, redis, region, td_ids, expand=True
         )
     }
     return {
         td_svt: NiceTd.parse_obj(
-            get_nice_td(raw_tds[td_svt.td_id], td_svt.svt_id, region)[0]
+            (await get_nice_td(redis, raw_tds[td_svt.td_id], td_svt.svt_id, region))[0]
         )
         for td_svt in td_svts
         if td_svt.td_id in raw_tds

@@ -1,3 +1,4 @@
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...config import Settings
@@ -12,10 +13,10 @@ from .skill import get_nice_skill_with_svt
 settings = Settings()
 
 
-def get_nice_mystic_code(
-    conn: Connection, region: Region, mc_id: int, lang: Language
+async def get_nice_mystic_code(
+    conn: Connection, redis: Redis, region: Region, mc_id: int, lang: Language
 ) -> NiceMysticCode:
-    raw_mc = raw.get_mystic_code_entity(conn, region, mc_id, expand=True)
+    raw_mc = await raw.get_mystic_code_entity(conn, redis, region, mc_id, expand=True)
     base_settings = {"base_url": settings.asset_url, "region": region}
     nice_mc = NiceMysticCode(
         id=raw_mc.mstEquip.id,
@@ -40,11 +41,13 @@ def get_nice_mystic_code(
             for exp in sorted(raw_mc.mstEquipExp, key=lambda x: x.lv)
             if exp.exp != -1
         ),
-        skills=(
+        skills=[
             skill
             for skillEntity in raw_mc.mstSkill
-            for skill in get_nice_skill_with_svt(skillEntity, mc_id, region, lang)
-        ),
+            for skill in await get_nice_skill_with_svt(
+                redis, skillEntity, mc_id, region, lang
+            )
+        ],
     )
 
     return nice_mc

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from aioredis import Redis
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.engine import Connection
 
 from ..config import Settings
@@ -31,7 +32,7 @@ from ..schemas.search import (
     SvtSearchQueryParams,
     TdSearchParams,
 )
-from .deps import get_db
+from .deps import get_db, get_redis
 from .utils import get_error_code, item_response, list_response
 
 
@@ -61,13 +62,16 @@ async def find_servant(
     expand: bool = False,
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_servant(conn, search_param)
     return list_response(
-        raw.get_servant_entity(
-            conn, search_param.region, mstSvt.id, expand, lore, mstSvt
-        )
-        for mstSvt in matches
+        [
+            await raw.get_servant_entity(
+                conn, redis, search_param.region, mstSvt.id, expand, lore, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -94,9 +98,12 @@ async def get_servant(
     expand: bool = False,
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     servant_id = masters[region].mstSvtServantCollectionNo.get(servant_id, servant_id)
-    servant_entity = raw.get_servant_entity(conn, region, servant_id, expand, lore)
+    servant_entity = await raw.get_servant_entity(
+        conn, redis, region, servant_id, expand, lore
+    )
     return item_response(servant_entity)
 
 
@@ -114,13 +121,16 @@ async def find_equip(
     expand: bool = False,
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_equip(conn, search_param)
     return list_response(
-        raw.get_servant_entity(
-            conn, search_param.region, mstSvt.id, expand, lore, mstSvt
-        )
-        for mstSvt in matches
+        [
+            await raw.get_servant_entity(
+                conn, redis, search_param.region, mstSvt.id, expand, lore, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -147,9 +157,12 @@ async def get_equip(
     expand: bool = False,
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     equip_id = masters[region].mstSvtEquipCollectionNo.get(equip_id, equip_id)
-    servant_entity = raw.get_servant_entity(conn, region, equip_id, expand, lore)
+    servant_entity = await raw.get_servant_entity(
+        conn, redis, region, equip_id, expand, lore
+    )
     return item_response(servant_entity)
 
 
@@ -167,13 +180,16 @@ async def find_svt(
     expand: bool = False,
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_servant(conn, search_param)
     return list_response(
-        raw.get_servant_entity(
-            conn, search_param.region, mstSvt.id, expand, lore, mstSvt
-        )
-        for mstSvt in matches
+        [
+            await raw.get_servant_entity(
+                conn, redis, search_param.region, mstSvt.id, expand, lore, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -199,8 +215,11 @@ async def get_svt(
     expand: bool = False,
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    servant_entity = raw.get_servant_entity(conn, region, svt_id, expand, lore)
+    servant_entity = await raw.get_servant_entity(
+        conn, redis, region, svt_id, expand, lore
+    )
     return item_response(servant_entity)
 
 
@@ -217,13 +236,14 @@ async def get_mystic_code(
     mc_id: int,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get Mystic Code info from ID
 
     - **expand**: Expand the skills and functions.
     """
-    mc_entity = raw.get_mystic_code_entity(conn, region, mc_id, expand)
+    mc_entity = await raw.get_mystic_code_entity(conn, redis, region, mc_id, expand)
     return item_response(mc_entity)
 
 
@@ -240,6 +260,7 @@ async def get_command_code(
     cc_id: int,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get Command Code info from ID
@@ -247,7 +268,7 @@ async def get_command_code(
     - **expand**: Expand the skills and functions.
     """
     cc_id = masters[region].mstCCCollectionNo.get(cc_id, cc_id)
-    cc_entity = raw.get_command_code_entity(conn, region, cc_id, expand)
+    cc_entity = await raw.get_command_code_entity(conn, redis, region, cc_id, expand)
     return item_response(cc_entity)
 
 
@@ -273,13 +294,16 @@ async def find_skill(
     reverse: bool = False,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_skill(conn, search_param)
     return list_response(
-        raw.get_skill_entity(
-            conn, search_param.region, mstSkill.id, reverse, expand=expand
-        )
-        for mstSkill in matches
+        [
+            await raw.get_skill_entity(
+                conn, redis, search_param.region, mstSkill.id, reverse, expand=expand
+            )
+            for mstSkill in matches
+        ]
     )
 
 
@@ -298,8 +322,11 @@ async def get_skill(
     reverse: bool = False,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    skill_entity = raw.get_skill_entity(conn, region, skill_id, reverse, expand=expand)
+    skill_entity = await raw.get_skill_entity(
+        conn, redis, region, skill_id, reverse, expand=expand
+    )
     return item_response(skill_entity)
 
 
@@ -325,11 +352,16 @@ async def find_td(
     reverse: bool = False,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_td(conn, search_param)
     return list_response(
-        raw.get_td_entity(conn, search_param.region, td.id, reverse, expand=expand)
-        for td in matches
+        [
+            await raw.get_td_entity(
+                conn, redis, search_param.region, td.id, reverse, expand=expand
+            )
+            for td in matches
+        ]
     )
 
 
@@ -348,8 +380,11 @@ async def get_td(
     reverse: bool = False,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    td_entity = raw.get_td_entity(conn, region, np_id, reverse, expand=expand)
+    td_entity = await raw.get_td_entity(
+        conn, redis, region, np_id, reverse, expand=expand
+    )
     return item_response(td_entity)
 
 
@@ -376,19 +411,23 @@ async def find_function(
     reverseDepth: ReverseDepth = ReverseDepth.skillNp,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_func(conn, search_param)
     return list_response(
-        raw.get_func_entity(
-            conn,
-            search_param.region,
-            mstFunc.id,
-            reverse,
-            reverseDepth,
-            expand,
-            mstFunc,
-        )
-        for mstFunc in matches
+        [
+            await raw.get_func_entity(
+                conn,
+                redis,
+                search_param.region,
+                mstFunc.id,
+                reverse,
+                reverseDepth,
+                expand,
+                mstFunc,
+            )
+            for mstFunc in matches
+        ]
     )
 
 
@@ -409,14 +448,12 @@ async def get_function(
     reverseDepth: ReverseDepth = ReverseDepth.skillNp,
     expand: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if func_id in masters[region].mstFuncId:
-        func_entity = raw.get_func_entity(
-            conn, region, func_id, reverse, reverseDepth, expand
-        )
-        return item_response(func_entity)
-    else:
-        raise HTTPException(status_code=404, detail="Function not found")
+    func_entity = await raw.get_func_entity(
+        conn, redis, region, func_id, reverse, reverseDepth, expand
+    )
+    return item_response(func_entity)
 
 
 buff_reverse_description = """
@@ -440,13 +477,22 @@ async def find_buff(
     reverse: bool = False,
     reverseDepth: ReverseDepth = ReverseDepth.function,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_buff(conn, search_param)
     return list_response(
-        raw.get_buff_entity(
-            conn, search_param.region, mstBuff.id, reverse, reverseDepth, mstBuff
-        )
-        for mstBuff in matches
+        [
+            await raw.get_buff_entity(
+                conn,
+                redis,
+                search_param.region,
+                mstBuff.id,
+                reverse,
+                reverseDepth,
+                mstBuff,
+            )
+            for mstBuff in matches
+        ]
     )
 
 
@@ -465,12 +511,12 @@ async def get_buff(
     reverse: bool = False,
     reverseDepth: ReverseDepth = ReverseDepth.function,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if buff_id in masters[region].mstBuffId:
-        buff_entity = raw.get_buff_entity(conn, region, buff_id, reverse, reverseDepth)
-        return item_response(buff_entity)
-    else:
-        raise HTTPException(status_code=404, detail="Buff not found")
+    buff_entity = await raw.get_buff_entity(
+        conn, redis, region, buff_id, reverse, reverseDepth
+    )
+    return item_response(buff_entity)
 
 
 @router.get(
@@ -498,14 +544,13 @@ async def find_item(
     response_model_exclude_unset=True,
     responses=get_error_code([404]),
 )
-async def get_item(region: Region, item_id: int) -> Response:
+async def get_item(
+    region: Region, item_id: int, redis: Redis = Depends(get_redis)
+) -> Response:
     """
     Get the item data from the given ID
     """
-    if item_id in masters[region].mstItemId:
-        return item_response(ItemEntity(mstItem=masters[region].mstItemId[item_id]))
-    else:
-        raise HTTPException(status_code=404, detail="Item not found")
+    return item_response(await raw.get_item_entity(redis, region, item_id))
 
 
 @router.get(

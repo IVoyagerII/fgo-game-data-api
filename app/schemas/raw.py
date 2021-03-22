@@ -1053,13 +1053,8 @@ class MysticCodeEntity(BaseModelORJson):
 
 
 class Master(BaseModelORJson):
-    mstSvtId: dict[int, MstSvt]
-    mstBuffId: dict[int, MstBuff]
-    mstFuncId: dict[int, MstFunc]
     mstFuncGroupId: dict[int, list[MstFuncGroup]]
     mstSkillId: dict[int, MstSkill]
-    mstItemId: dict[int, MstItem]
-    mstGiftId: dict[int, list[MstGift]]
     mstTreasureDeviceId: dict[int, MstTreasureDevice]
     mstSvtServantCollectionNo: dict[int, int]
     mstSvtEquipCollectionNo: dict[int, int]
@@ -1068,7 +1063,6 @@ class Master(BaseModelORJson):
     mstCombineLimitItem: set[int]
     mstCombineCostumeItem: set[int]
     mstSvtLimitFirst: dict[int, BasicMstSvtLimit]
-    mstSvtLimitAddIndividutality: dict[int, list[int]]
     mstEquipId: dict[int, MstEquip]
     mstEquipSkill: list[MstEquipSkill]
     mstWarId: dict[int, MstWar]

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from aioredis import Redis
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.engine import Connection
 
 from ..config import Settings
@@ -33,7 +34,7 @@ from ..schemas.search import (
     SvtSearchQueryParams,
     TdSearchParams,
 )
-from .deps import get_db, get_db_transaction
+from .deps import get_db, get_db_transaction, get_redis
 from .utils import get_error_code, item_response, language_parameter, list_response
 
 
@@ -61,13 +62,16 @@ async def find_servant(
     lang: Language = Depends(language_parameter),
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_servant(conn, search_param)
     return list_response(
-        nice.get_nice_servant_model(
-            conn, search_param.region, mstSvt.id, lang, lore, mstSvt
-        )
-        for mstSvt in matches
+        [
+            await nice.get_nice_servant_model(
+                conn, redis, search_param.region, mstSvt.id, lang, lore, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -105,10 +109,11 @@ async def get_servant(
     lang: Language = Depends(language_parameter),
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     servant_id = masters[region].mstSvtServantCollectionNo.get(servant_id, servant_id)
     return item_response(
-        nice.get_nice_servant_model(conn, region, servant_id, lang, lore)
+        await nice.get_nice_servant_model(conn, redis, region, servant_id, lang, lore)
     )
 
 
@@ -131,13 +136,16 @@ async def find_equip(
     lang: Language = Depends(language_parameter),
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_equip(conn, search_param)
     return list_response(
-        nice.get_nice_equip_model(
-            conn, search_param.region, mstSvt.id, lang, lore, mstSvt
-        )
-        for mstSvt in matches
+        [
+            await nice.get_nice_equip_model(
+                conn, redis, search_param.region, mstSvt.id, lang, lore, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -175,9 +183,12 @@ async def get_equip(
     lang: Language = Depends(language_parameter),
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     equip_id = masters[region].mstSvtEquipCollectionNo.get(equip_id, equip_id)
-    return item_response(nice.get_nice_equip_model(conn, region, equip_id, lang, lore))
+    return item_response(
+        await nice.get_nice_equip_model(conn, redis, region, equip_id, lang, lore)
+    )
 
 
 @router.get(
@@ -194,13 +205,16 @@ async def find_svt(
     lang: Language = Depends(language_parameter),
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_servant(conn, search_param)
     return list_response(
-        nice.get_nice_servant_model(
-            conn, search_param.region, mstSvt.id, lang, lore, mstSvt
-        )
-        for mstSvt in matches
+        [
+            await nice.get_nice_servant_model(
+                conn, redis, search_param.region, mstSvt.id, lang, lore, mstSvt
+            )
+            for mstSvt in matches
+        ]
     )
 
 
@@ -218,6 +232,7 @@ async def get_svt(
     lang: Language = Depends(language_parameter),
     lore: bool = False,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get svt info from ID
@@ -225,7 +240,9 @@ async def get_svt(
     Only use actual IDs for lookup. Does not convert from collectionNo.
     The endpoint is not limited to servants or equips ids.
     """
-    return item_response(nice.get_nice_servant_model(conn, region, svt_id, lang, lore))
+    return item_response(
+        await nice.get_nice_servant_model(conn, redis, region, svt_id, lang, lore)
+    )
 
 
 get_mc_description = "Get nice Mystic Code info from ID"
@@ -254,8 +271,11 @@ async def get_mystic_code(
     mc_id: int,
     lang: Language = Depends(language_parameter),
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    return item_response(mc.get_nice_mystic_code(conn, region, mc_id, lang))
+    return item_response(
+        await mc.get_nice_mystic_code(conn, redis, region, mc_id, lang)
+    )
 
 
 get_cc_description = "Get nice Command Code info from ID"
@@ -285,9 +305,12 @@ async def get_command_code(
     cc_id: int,
     lang: Language = Depends(language_parameter),
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     cc_id = masters[region].mstCCCollectionNo.get(cc_id, cc_id)
-    return item_response(cc.get_nice_command_code(conn, region, cc_id, lang))
+    return item_response(
+        await cc.get_nice_command_code(conn, redis, region, cc_id, lang)
+    )
 
 
 nice_skill_extra = """
@@ -313,18 +336,22 @@ async def find_skill(
     reverse: bool = False,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_skill(conn, search_param)
     return list_response(
-        nice.get_nice_skill_with_reverse(
-            conn,
-            search_param.region,
-            mstSkill.id,
-            lang,
-            reverse,
-            reverseData=reverseData,
-        )
-        for mstSkill in matches
+        [
+            await nice.get_nice_skill_with_reverse(
+                conn,
+                redis,
+                search_param.region,
+                mstSkill.id,
+                lang,
+                reverse,
+                reverseData=reverseData,
+            )
+            for mstSkill in matches
+        ]
     )
 
 
@@ -344,10 +371,11 @@ async def get_skill(
     reverse: bool = False,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     return item_response(
-        nice.get_nice_skill_with_reverse(
-            conn, region, skill_id, lang, reverse, reverseData=reverseData
+        await nice.get_nice_skill_with_reverse(
+            conn, redis, region, skill_id, lang, reverse, reverseData=reverseData
         )
     )
 
@@ -375,13 +403,22 @@ async def find_td(
     reverse: bool = False,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_td(conn, search_param)
     return list_response(
-        nice.get_nice_td_with_reverse(
-            conn, search_param.region, td.id, lang, reverse, reverseData=reverseData
-        )
-        for td in matches
+        [
+            await nice.get_nice_td_with_reverse(
+                conn,
+                redis,
+                search_param.region,
+                td.id,
+                lang,
+                reverse,
+                reverseData=reverseData,
+            )
+            for td in matches
+        ]
     )
 
 
@@ -401,10 +438,11 @@ async def get_td(
     reverse: bool = False,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     return item_response(
-        nice.get_nice_td_with_reverse(
-            conn, region, np_id, lang, reverse, reverseData=reverseData
+        await nice.get_nice_td_with_reverse(
+            conn, redis, region, np_id, lang, reverse, reverseData=reverseData
         )
     )
 
@@ -434,20 +472,24 @@ async def find_function(
     reverseDepth: ReverseDepth = ReverseDepth.skillNp,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_func(conn, search_param)
     return list_response(
-        nice.get_nice_func_with_reverse(
-            conn,
-            search_param.region,
-            mstFunc.id,
-            lang,
-            reverse,
-            reverseDepth,
-            reverseData,
-            mstFunc,
-        )
-        for mstFunc in matches
+        [
+            await nice.get_nice_func_with_reverse(
+                conn,
+                redis,
+                search_param.region,
+                mstFunc.id,
+                lang,
+                reverse,
+                reverseDepth,
+                reverseData,
+                mstFunc,
+            )
+            for mstFunc in matches
+        ]
     )
 
 
@@ -469,15 +511,13 @@ async def get_function(
     reverseDepth: ReverseDepth = ReverseDepth.skillNp,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if func_id in masters[region].mstFuncId:
-        return item_response(
-            nice.get_nice_func_with_reverse(
-                conn, region, func_id, lang, reverse, reverseDepth, reverseData
-            )
+    return item_response(
+        await nice.get_nice_func_with_reverse(
+            conn, redis, region, func_id, lang, reverse, reverseDepth, reverseData
         )
-    else:
-        raise HTTPException(status_code=404, detail="Function not found")
+    )
 
 
 buff_reverse_lang_description = """
@@ -505,20 +545,24 @@ async def find_buff(
     reverseDepth: ReverseDepth = ReverseDepth.function,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     matches = search.search_buff(conn, search_param)
     return list_response(
-        nice.get_nice_buff_with_reverse(
-            conn,
-            search_param.region,
-            mstBuff.id,
-            lang,
-            reverse,
-            reverseDepth,
-            reverseData,
-            mstBuff,
-        )
-        for mstBuff in matches
+        [
+            await nice.get_nice_buff_with_reverse(
+                conn,
+                redis,
+                search_param.region,
+                mstBuff.id,
+                lang,
+                reverse,
+                reverseDepth,
+                reverseData,
+                mstBuff,
+            )
+            for mstBuff in matches
+        ]
     )
 
 
@@ -539,15 +583,12 @@ async def get_buff(
     reverseDepth: ReverseDepth = ReverseDepth.function,
     reverseData: ReverseData = ReverseData.nice,
     conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
-    if buff_id in masters[region].mstBuffId:
-        return item_response(
-            nice.get_nice_buff_with_reverse(
-                conn, region, buff_id, lang, reverse, reverseDepth, reverseData
-            )
-        )
-    else:
-        raise HTTPException(status_code=404, detail="Buff not found")
+    nice_buff = await nice.get_nice_buff_with_reverse(
+        conn, redis, region, buff_id, lang, reverse, reverseDepth, reverseData
+    )
+    return item_response(nice_buff)
 
 
 @router.get(
@@ -590,14 +631,13 @@ if settings.documentation_all_nice:
     response_model_exclude_unset=True,
     responses=get_error_code([404, 500]),
 )
-async def get_item(region: Region, item_id: int) -> Response:
+async def get_item(
+    region: Region, item_id: int, redis: Redis = Depends(get_redis)
+) -> Response:
     """
     Get the nice item data from the given item ID
     """
-    if item_id in masters[region].mstItemId:
-        return item_response(item.get_nice_item(region, item_id))
-    else:
-        raise HTTPException(status_code=404, detail="Item not found")
+    return item_response(await item.get_nice_item(redis, region, item_id))
 
 
 @router.get(
@@ -609,12 +649,15 @@ async def get_item(region: Region, item_id: int) -> Response:
     responses=get_error_code([404, 500]),
 )
 async def get_event(
-    region: Region, event_id: int, conn: Connection = Depends(get_db)
+    region: Region,
+    event_id: int,
+    conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get the nice event data from the given event ID
     """
-    return item_response(event.get_nice_event(conn, region, event_id))
+    return item_response(await event.get_nice_event(conn, redis, region, event_id))
 
 
 @router.get(
@@ -626,12 +669,15 @@ async def get_event(
     responses=get_error_code([404, 500]),
 )
 async def get_war(
-    region: Region, war_id: int, conn: Connection = Depends(get_db)
+    region: Region,
+    war_id: int,
+    conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get the nice war data from the given war ID
     """
-    war_response = item_response(war.get_nice_war(conn, region, war_id))
+    war_response = item_response(await war.get_nice_war(conn, redis, region, war_id))
     war_response.headers["Bloom-Response-TTL"] = str(settings.quest_cache_length)
     return war_response
 
@@ -655,10 +701,11 @@ async def get_quest_phase(
     quest_id: int,
     phase: int,
     conn: Connection = Depends(get_db_transaction),
+    redis: Redis = Depends(get_redis),
     lang: Language = Depends(language_parameter),
 ) -> Response:
     quest_response = item_response(
-        await quest.get_nice_quest_phase(conn, region, quest_id, phase, lang)
+        await quest.get_nice_quest_phase(conn, redis, region, quest_id, phase, lang)
     )
     quest_response.headers["Bloom-Response-TTL"] = str(settings.quest_cache_length)
     return quest_response
@@ -673,12 +720,17 @@ async def get_quest_phase(
     responses=get_error_code([404, 500]),
 )
 async def get_quest(
-    region: Region, quest_id: int, conn: Connection = Depends(get_db)
+    region: Region,
+    quest_id: int,
+    conn: Connection = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get the nice quest data from the given quest ID
     """
-    quest_response = item_response(quest.get_nice_quest_alone(conn, region, quest_id))
+    quest_response = item_response(
+        await quest.get_nice_quest_alone(conn, redis, region, quest_id)
+    )
     quest_response.headers["Bloom-Response-TTL"] = str(settings.quest_cache_length)
     return quest_response
 
@@ -697,12 +749,13 @@ async def get_ai_field(
     ai_id: int,
     conn: Connection = Depends(get_db),
     lang: Language = Depends(language_parameter),
+    redis: Redis = Depends(get_redis),
 ) -> Response:
     """
     Get the nice AI data from the given AI ID
     """
     field_flag = ai_type == AiType.field
-    ai_entity = ai.get_nice_ai_collection(
-        conn, region, ai_id, field=field_flag, lang=lang
+    ai_entity = await ai.get_nice_ai_collection(
+        conn, redis, region, ai_id, field=field_flag, lang=lang
     )
     return item_response(ai_entity)

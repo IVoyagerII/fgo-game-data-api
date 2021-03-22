@@ -1,5 +1,6 @@
 from typing import Any, Optional, Union
 
+from aioredis import Redis
 from sqlalchemy.engine import Connection
 
 from ...config import Settings
@@ -67,8 +68,9 @@ def get_nice_stage(
     )
 
 
-def get_nice_quest(
+async def get_nice_quest(
     conn: Connection,
+    redis: Redis,
     region: Region,
     raw_quest: Union[QuestEntity, QuestPhaseEntity],
     war_id: Optional[int] = None,
@@ -86,8 +88,8 @@ def get_nice_quest(
         "consumeItem": [
             nice_item_amount
             for consumeItem in raw_quest.mstQuestConsumeItem
-            for nice_item_amount in get_nice_item_amount(
-                region, consumeItem.itemIds, consumeItem.nums
+            for nice_item_amount in await get_nice_item_amount(
+                redis, region, consumeItem.itemIds, consumeItem.nums
             )
         ],
         "consume": raw_quest.mstQuest.actConsume,
@@ -108,21 +110,24 @@ def get_nice_quest(
     return nice_data
 
 
-def get_nice_quest_alone(conn: Connection, region: Region, quest_id: int) -> NiceQuest:
+async def get_nice_quest_alone(
+    conn: Connection, redis: Redis, region: Region, quest_id: int
+) -> NiceQuest:
     return NiceQuest.parse_obj(
-        get_nice_quest(conn, region, raw.get_quest_entity(conn, quest_id))
+        await get_nice_quest(conn, redis, region, raw.get_quest_entity(conn, quest_id))
     )
 
 
 async def get_nice_quest_phase(
     conn: Connection,
+    redis: Redis,
     region: Region,
     quest_id: int,
     phase: int,
     lang: Language = Language.jp,
 ) -> NiceQuestPhase:
     raw_quest = raw.get_quest_phase_entity(conn, quest_id, phase)
-    nice_data = get_nice_quest(conn, region, raw_quest)
+    nice_data = await get_nice_quest(conn, redis, region, raw_quest)
 
     stages = sorted(raw_quest.mstStage, key=lambda stage: stage.wave)
 
@@ -130,7 +135,9 @@ async def get_nice_quest_phase(
     if stages:
         quest_detail = await get_quest_detail(conn, region, quest_id, phase)
         if quest_detail:
-            quest_enemies = get_quest_enemies(conn, region, quest_detail, lang)
+            quest_enemies = await get_quest_enemies(
+                conn, redis, region, quest_detail, lang
+            )
 
     nice_data |= {
         "phase": raw_quest.mstQuestPhase.phase,
